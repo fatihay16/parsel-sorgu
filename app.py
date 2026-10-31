@@ -437,13 +437,11 @@ def query_one(row):
                 raise
             except Exception as e:
                 devam_hatalari.append(f"{no}: {e}")
-    for item in devam:
-        item.pop("geometry", None)
     if devam_hatalari:
         ayrinti.append("Devam parselleri: " + "; ".join(devam_hatalari))
     ham = json.dumps({"properties": props, "geometri": (geom or {}).get("type") or None}, ensure_ascii=False)
     row.update({
-        "mahalle_id": str(mahalle_id), "alan": area_text(props.get("alan")), "nitelik": str(props.get("nitelik") or ""),
+        "mahalle_id": str(mahalle_id), "alan": area_text(props.get("alan")) or "TKGM verisinde bulunamadı", "nitelik": str(props.get("nitelik") or "TKGM verisinde bulunamadı"),
         "koordinatlar": geometri_ozeti(geom), "geometry": geom, "status": sonuc["durum"],
         "pasif_mesaj": sonuc["ibare"], "islem_turu": sonuc["islem_turu"], "islem_tarihi": sonuc["islem_tarihi"],
         "yeni_parseller": "; ".join(sonuc["yeni"]), "hareketler": json.dumps(sonuc["satirlar"], ensure_ascii=False),
@@ -927,6 +925,23 @@ class App(tk.Tk):
                 self.after(0, self.status.set, f"Sorgulanıyor: {row['mahalle']} {row['ada']}/{row['parsel']}")
                 query_one(row)
                 geom = row.pop("geometry", None)
+                try:
+                    devamlar = json.loads(row.get("devam_parseller") or "[]")
+                except (TypeError, ValueError):
+                    devamlar = []
+                for alt in devamlar:
+                    alt_geom = alt.pop("geometry", None)
+                    if alt_geom:
+                        try:
+                            DATA_DIR.mkdir(exist_ok=True)
+                            safe_alt = "_".join(str(row[k]).replace("/", "-").replace(" ", "_") for k in ("il", "ilce", "mahalle")) + f"_Ada_{alt.get(chr(97)+chr(100)+chr(97))}_Parsel_{alt.get(chr(112)+chr(97)+chr(114)+chr(115)+chr(101)+chr(108))}"
+                            alt_path = DATA_DIR / (safe_alt + ".png")
+                            alt_row = dict(row, ada=alt.get("ada"), parsel=alt.get("parsel"), alan=alt.get("alan"), nitelik=alt.get("nitelik"))
+                            make_map(alt_row, alt_geom, alt_path)
+                            alt["map_file"] = str(alt_path)
+                        except Exception:
+                            alt["map_file"] = ""
+                row["devam_parseller"] = json.dumps(devamlar, ensure_ascii=False)
                 if row["status"] == "Aktif" and geom:
                     try:
                         DATA_DIR.mkdir(exist_ok=True)
