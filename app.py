@@ -668,6 +668,7 @@ class App(tk.Tk):
         self._ui()
         self.load_saved()
         self.sayac_goster()
+        self.after(150, self.illeri_yukle)
 
     def _style(self):
         st = ttk.Style(self)
@@ -777,6 +778,13 @@ class App(tk.Tk):
         else:
             url = API + "/idariYapi/mahalleListe/" + str(ust_id)
         return get_json_onbellekli(url)
+
+    def illeri_yukle(self):
+        try:
+            iller = self.idari_liste("il")
+            self.il_combo["values"] = self.liste_adlari(iller)
+        except Exception as e:
+            self.status.set("İl listesi alınamadı: " + str(e))
 
     def il_secildi(self, _event=None):
         try:
