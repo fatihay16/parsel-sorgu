@@ -358,7 +358,8 @@ def analiz_et(ada, parsel, props, hareket):
                 satirlar.append(s)
         ibare = ibare or pasif_ibaresi(v)
     kendi_satir = next((s for s in satirlar if s["no"] == kendi), None)
-    # Hareket tablosundaki parselin kendi satırı, genel durum alanından önceliklidir.\n    durum = kendi_satir["durum"] if kendi_satir else tkgm_durum
+    # Hareket tablosundaki parselin kendi satırı, genel durum alanından önceliklidir.
+    durum = kendi_satir["durum"] if kendi_satir else tkgm_durum
     if durum is None and ibare:
         durum = "Pasif"
     tarih = tur = ""
