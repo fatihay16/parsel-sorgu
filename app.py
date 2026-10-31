@@ -703,8 +703,18 @@ class App(tk.Tk):
             ttk.Label(form, text=label).grid(row=0, column=i, sticky="w", padx=5)
             v = tk.StringVar()
             self.vars[key] = v
-            ttk.Entry(form, textvariable=v, width=width).grid(row=1, column=i, sticky="ew", padx=5, pady=(3, 0))
+            if key in ("il", "ilce", "mahalle"):
+                widget = ttk.Combobox(form, textvariable=v, width=width)
+                widget.grid(row=1, column=i, sticky="ew", padx=5, pady=(3, 0))
+                if key == "il":
+                    widget.bind("<<ComboboxSelected>>", self.il_secildi)
+                elif key == "ilce":
+                    widget.bind("<<ComboboxSelected>>", self.ilce_secildi)
+                setattr(self, key + "_combo", widget)
+            else:
+                ttk.Entry(form, textvariable=v, width=width).grid(row=1, column=i, sticky="ew", padx=5, pady=(3, 0))
             form.columnconfigure(i, weight=1)
+        self.btn(form, "Mahalle listesini yenile", self.mahalleleri_yenile).grid(row=1, column=6, padx=6)
         self.btn(form, "Listeye ekle", self.add_manual).grid(row=1, column=5, padx=10)
         frame = ttk.Frame(self, padding=(18, 5))
         frame.pack(fill="both", expand=True)
@@ -747,6 +757,53 @@ class App(tk.Tk):
 
     def btn(self, parent, text, command):
         return ttk.Button(parent, text=text, command=command)
+
+    @staticmethod
+    def liste_adlari(veri):
+        alanlar = ("text", "ad", "name", "ilAdi", "ilceAdi", "mahalleAdi")
+        sonuc = []
+        for item in feature_items(veri):
+            if isinstance(item, dict):
+                ad = next((str(item[k]).strip() for k in alanlar if item.get(k) not in (None, "")), "")
+                if ad and ad not in sonuc:
+                    sonuc.append(ad)
+        return sorted(sonuc, key=norm_ad)
+
+    def idari_liste(self, tur, ust_id=None):
+        if tur == "il":
+            url = API + "/idariYapi/ilListe"
+        elif tur == "ilce":
+            url = API + "/idariYapi/ilceListe/" + str(ust_id)
+        else:
+            url = API + "/idariYapi/mahalleListe/" + str(ust_id)
+        return get_json_onbellekli(url)
+
+    def il_secildi(self, _event=None):
+        try:
+            iller = self.idari_liste("il")
+            il_id = find_id(feature_items(iller), ["text", "ad", "name", "ilAdi"], self.vars["il"].get())
+            ilceler = self.idari_liste("ilce", il_id)
+            self.ilce_combo["values"] = self.liste_adlari(ilceler)
+            self.vars["ilce"].set("")
+            self.mahalle_combo["values"] = ()
+            self.vars["mahalle"].set("")
+        except Exception as e:
+            messagebox.showerror("İlçe listesi alınamadı", str(e))
+
+    def ilce_secildi(self, _event=None):
+        self.mahalleleri_yenile()
+
+    def mahalleleri_yenile(self):
+        try:
+            iller = self.idari_liste("il")
+            il_id = find_id(feature_items(iller), ["text", "ad", "name", "ilAdi"], self.vars["il"].get())
+            ilceler = self.idari_liste("ilce", il_id)
+            ilce_id = find_id(feature_items(ilceler), ["text", "ilceAdi", "ad", "name"], self.vars["ilce"].get())
+            mahalleler = self.idari_liste("mahalle", ilce_id)
+            self.mahalle_combo["values"] = self.liste_adlari(mahalleler)
+            self.status.set(str(len(self.mahalle_combo["values"])) + " mahalle listelendi.")
+        except Exception as e:
+            messagebox.showerror("Mahalle listesi alınamadı", str(e))
 
     # ---- sayaç / limit
     def limit_degisti(self):
