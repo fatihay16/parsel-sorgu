@@ -280,9 +280,20 @@ def hareket_satirlari(obj):
 
 
 def props_durum(props):
-    """Parsel yanıtında doğrudan 'Aktif/Pasif' bilgisi varsa onu verir (alan adı bilinmediği için geniş taranır)."""
+    """TKGM parsel cevabındaki durum alanını ve alternatif durum alanlarını çözer."""
     if not isinstance(props, dict):
         return None
+    # TKGM Parsel Sorgu cevabında durum=0 pasif, durum=1 aktif.
+    raw = props.get("durum")
+    if raw is not None:
+        deger = str(raw).strip()
+        if deger == "0":
+            return "Pasif"
+        if deger == "1":
+            return "Aktif"
+        d = _durum_degeri(deger)
+        if d:
+            return d
     for k, v in props.items():
         kk = katla(k)
         if isinstance(v, bool):
@@ -295,6 +306,28 @@ def props_durum(props):
             if d:
                 return d
     return None
+
+
+def tkgm_gittigi_parseller(props):
+    """TKGM'nin gittigiParselListe alanındaki GeoJSON hedef parsellerini çıkarır."""
+    raw = (props or {}).get("gittigiParselListe")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            return []
+    if not isinstance(raw, dict):
+        return []
+    sonuc = []
+    for feature in raw.get("features") or []:
+        p = (feature or {}).get("properties") or {}
+        ada = str(p.get("adaNo") or "").strip()
+        parsel = str(p.get("parselNo") or "").strip()
+        if parsel:
+            no = f"{ada}/{parsel}" if ada else parsel
+            if no not in sonuc:
+                sonuc.append(no)
+    return sonuc
 
 
 def zemin_id_bul(props):
@@ -310,17 +343,24 @@ def analiz_et(ada, parsel, props, hareket):
     kendi = f"{str(ada).strip()}/{str(parsel).strip()}"
     kaynaklar = [props] + ([hareket] if hareket is not None else [])
     satirlar, ibare = [], ""
+    # TKGM hareket bilgisi aynı parsel cevabının properties alanında geliyor.
+    tkgm_durum = props_durum(props)
+    sebep = str((props or {}).get("gittigiParselSebep") or "").strip()
+    hedefler = tkgm_gittigi_parseller(props)
+    if tkgm_durum == "Pasif":
+        ibare = sebep or "Bu taşınmaz pasif durumdadır."
+        satirlar.append({"aciklama": ibare, "durum": "Pasif", "no": kendi})
+        for no in hedefler:
+            satirlar.append({"aciklama": sebep, "durum": "Aktif", "no": no})
     for v in kaynaklar:
         for s in hareket_satirlari(v):
             if s not in satirlar:
                 satirlar.append(s)
         ibare = ibare or pasif_ibaresi(v)
     kendi_satir = next((s for s in satirlar if s["no"] == kendi), None)
-    durum = kendi_satir["durum"] if kendi_satir else None
+    durum = tkgm_durum or (kendi_satir["durum"] if kendi_satir else None)
     if durum is None and ibare:
         durum = "Pasif"
-    if durum is None:
-        durum = props_durum(props)
     tarih = tur = ""
     for metin in [ibare] + [s["aciklama"] for s in ([kendi_satir] if kendi_satir else []) + satirlar]:
         if metin and not tarih:
