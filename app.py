@@ -599,9 +599,14 @@ class Detay(tk.Toplevel):
         for f, ad in ((self.ozet_tab, "Özet"), (self.tablo_tab, "Hareket Tablosu"), (self.grafik_tab, "Grafik"), (self.devam_tab, "Yeni Parseller"), (self.ham_tab, "Ham veri")):
             nb.add(f, text=ad)
         self.satirlar = []
+        self.devamlar = []
         try:
             self.satirlar = json.loads(row.get("hareketler") or "[]")
-        except ValueError:
+        except (TypeError, ValueError):
+            pass
+        try:
+            self.devamlar = json.loads(row.get("devam_parseller") or "[]")
+        except (TypeError, ValueError):
             pass
         self._ozet()
         self._tablo()
@@ -627,9 +632,9 @@ class Detay(tk.Toplevel):
                     ("Alan (m²)", r.get("alan") or "-"), ("Nitelik", r.get("nitelik") or "-")]
         if durum == "Pasif":
             satirlar.insert(1, ("İşlem", f"{r.get('islem_turu') or '-'}  ({r.get('islem_tarihi') or '-'})"))
-            yeni = [x for x in (r.get("yeni_parseller") or "").split("; ") if x]
-            satirlar.append((f"Oluşan yeni parseller ({len(yeni)} adet)" if yeni else "Oluşan yeni parseller",
-                             ",  ".join(yeni) if yeni else "Alınamadı"))
+            son_aktif = self.son_aktif_parseller()
+            satirlar.append((f"Zincir sonundaki aktif parseller ({len(son_aktif)} adet)",
+                             ",  ".join(son_aktif) if son_aktif else "Belirlenemedi"))
         for k, v in satirlar:
             f = ttk.Frame(self.ozet_tab)
             f.pack(fill="x", padx=24, pady=3)
@@ -638,16 +643,53 @@ class Detay(tk.Toplevel):
         if durum == "Pasif":
             ttk.Label(self.ozet_tab, text="Not: Pasif parselin alan/niteliği son kayıtlı bilgidir.", foreground="#777").pack(anchor="w", padx=24, pady=(10, 0))
 
+    def tum_hareket_satirlari(self):
+        """Kök ve ara parsellerin hareketlerini birleştirir; aynı parselde en güncel durumu tutar."""
+        son = {}
+        for satir in self.satirlar:
+            no = str(satir.get("no") or "").strip()
+            if no:
+                son[no] = dict(satir)
+        for parca in self.devamlar:
+            try:
+                alt_satirlar = json.loads(parca.get("hareketler") or "[]")
+            except (TypeError, ValueError):
+                alt_satirlar = []
+            for satir in alt_satirlar:
+                no = str(satir.get("no") or "").strip()
+                if no:
+                    son[no] = dict(satir)
+            no = f"{parca.get('ada')}/{parca.get('parsel')}"
+            if no not in son or parca.get("durum") in ("Aktif", "Pasif"):
+                son[no] = {"no": no, "durum": parca.get("durum") or "Belirsiz",
+                           "aciklama": parca.get("pasif_mesaj") or ""}
+        return list(son.values())
+
+    def son_aktif_parseller(self):
+        """Ara aşamada aktif görünüp sonraki işlemde pasife düşenleri son listeden çıkarır."""
+        durumlar = {}
+        for satir in self.satirlar:
+            no = str(satir.get("no") or "").strip()
+            if no:
+                durumlar[no] = satir.get("durum")
+        for parca in self.devamlar:
+            no = f"{parca.get('ada')}/{parca.get('parsel')}"
+            durumlar[no] = parca.get("durum")
+        return sorted(no for no, durum in durumlar.items() if durum == "Aktif"
+                      and no != f"{self.row.get('ada')}/{self.row.get('parsel')}")
+
     def _tablo(self):
+        hareketler = self.tum_hareket_satirlari()
         t = ttk.Treeview(self.tablo_tab, columns=("aciklama", "durum", "no"), show="headings", height=10)
-        for c, ad, w in (("aciklama", "Açıklama", 380), ("durum", "Durum", 90), ("no", "Taşınmaz No", 120)):
+        for c, ad, w in (("aciklama", "Açıklama / İşlem", 380), ("durum", "Son Durum", 90), ("no", "Taşınmaz No", 120)):
             t.heading(c, text=ad)
             t.column(c, width=w, anchor="w")
         t.tag_configure("Pasif", foreground="#aaaaaa")
-        for s in self.satirlar:
-            t.insert("", "end", values=(s.get("aciklama") or "-", s.get("durum"), s.get("no")), tags=(s.get("durum"),))
+        for satir in hareketler:
+            t.insert("", "end", values=(satir.get("aciklama") or "-", satir.get("durum"), satir.get("no")),
+                     tags=(satir.get("durum"),))
         t.pack(fill="both", expand=True, padx=12, pady=12)
-        if not self.satirlar:
+        if not hareketler:
             ttk.Label(self.tablo_tab, text="Hareket kaydı alınamadı.").pack()
 
     def _grafik(self):
@@ -659,24 +701,56 @@ class Detay(tk.Toplevel):
     def grafik_ciz(self):
         cv, w = self.cv, max(self.cv.winfo_width(), 700)
         cv.delete("all")
-        pasif = [s["no"] for s in self.satirlar if s["durum"] == "Pasif"]
-        aktif = [s["no"] for s in self.satirlar if s["durum"] == "Aktif"]
-        if not self.satirlar:
-            cv.create_text(w / 2, 100, text="Grafik için hareket kaydı yok", fill="#888")
+        kok = f"{self.row.get('ada')}/{self.row.get('parsel')}"
+        dugum_durum = {kok: self.row.get("status") or "Belirsiz"}
+        kenarlar = []
+        kok_yeniler = [x.strip() for x in (self.row.get("yeni_parseller") or "").split(";") if x.strip()]
+        for yeni in kok_yeniler:
+            kenarlar.append((kok, yeni))
+            dugum_durum.setdefault(yeni, "Aktif")
+        for parca in self.devamlar:
+            no = f"{parca.get('ada')}/{parca.get('parsel')}"
+            dugum_durum[no] = parca.get("durum") or "Belirsiz"
+            for yeni in (parca.get("yeni_parseller") or "").split(";"):
+                yeni = yeni.strip()
+                if yeni:
+                    kenarlar.append((no, yeni))
+                    dugum_durum.setdefault(yeni, "Aktif")
+        if not kenarlar:
+            cv.create_text(w / 2, 100, text="Parsel hareket zinciri bulunamadı", fill="#888")
             return
-        ust_y, alt_y, orta = 60, 190, 125
-        kutu = lambda x, y, metin, dolgu, yazi: (
-            cv.create_rectangle(x - 48, y - 15, x + 48, y + 15, fill=dolgu, outline="#666"),
-            cv.create_text(x, y, text=metin, fill=yazi, font=("Segoe UI", 10)))
-        px = {n: w * (i + 1) / (len(pasif) + 1) for i, n in enumerate(pasif)}
-        ax = {n: w * (i + 1) / (len(aktif) + 1) for i, n in enumerate(aktif)}
-        for p in pasif:
-            for a in aktif:
-                cv.create_line(px[p], ust_y + 15, px[p], orta, ax[a], orta, ax[a], alt_y - 15, fill="#777", width=2)
-        for n, x in px.items():
-            kutu(x, ust_y, n, "#d3d3d3", "#000")
-        for n, x in ax.items():
-            kutu(x, alt_y if pasif else ust_y, n, "#7a9a3a", "#fff")
+
+        seviyeler = {kok: 0}
+        for _ in range(20):
+            degisti = False
+            for kaynak, hedef in kenarlar:
+                if kaynak in seviyeler and hedef not in seviyeler:
+                    seviyeler[hedef] = seviyeler[kaynak] + 1
+                    degisti = True
+            if not degisti:
+                break
+        for no in dugum_durum:
+            seviyeler.setdefault(no, 1)
+        max_seviye = max(seviyeler.values()) if seviyeler else 1
+        y_adim = max(85, min(125, 360 / max(max_seviye, 1)))
+        konum = {}
+        for seviye in range(max_seviye + 1):
+            grup = [n for n, d in seviyeler.items() if d == seviye]
+            for i, no in enumerate(grup):
+                x = w * (i + 1) / (len(grup) + 1)
+                y = 55 + seviye * y_adim
+                konum[no] = (x, y)
+        for kaynak, hedef in kenarlar:
+            if kaynak in konum and hedef in konum:
+                x1, y1 = konum[kaynak]
+                x2, y2 = konum[hedef]
+                cv.create_line(x1, y1 + 18, x2, y2 - 18, fill="#777", width=2, arrow="last")
+        for no, (x, y) in konum.items():
+            durum = dugum_durum.get(no, "Belirsiz")
+            pasif = durum == "Pasif"
+            dolgu = "#d3d3d3" if pasif else "#7a9a3a" if durum == "Aktif" else "#fff1bf"
+            cv.create_rectangle(x - 48, y - 17, x + 48, y + 17, fill=dolgu, outline="#666")
+            cv.create_text(x, y, text=no, fill="#000" if pasif else "#fff", font=("Segoe UI", 10))
 
     def _devam(self):
         """Pasif parselden oluşan yeni parsellerin kendi TKGM alan/niteliklerini göster."""
@@ -888,7 +962,11 @@ class App(tk.Tk):
         yazilan = self.vars[alan].get()
         aranan = norm_ad(yazilan)
         eslesen = [ad for ad in tam if aranan in norm_ad(ad)] if aranan else tam
-        getattr(self, alan + "_combo")["values"] = eslesen
+        combo = getattr(self, alan + "_combo")
+        combo["values"] = eslesen
+        # Yazarken listeyi otomatik aç; kullanıcı ayrıca ok/üç nokta alanına tıklamasın.
+        if eslesen and combo.focus_get() == combo:
+            combo.after_idle(lambda c=combo: c.tk.call("ttk::combobox::Post", c))
 
     def illeri_yukle(self):
         try:
