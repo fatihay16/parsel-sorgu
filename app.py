@@ -561,8 +561,8 @@ class Detay(tk.Toplevel):
                  font=("Segoe UI", 15), anchor="w", padx=16, pady=12).pack(fill="x")
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True)
-        self.ozet_tab, self.tablo_tab, self.grafik_tab, self.ham_tab = (ttk.Frame(nb) for _ in range(4))
-        for f, ad in ((self.ozet_tab, "Özet"), (self.tablo_tab, "Tablo"), (self.grafik_tab, "Grafik"), (self.ham_tab, "Ham veri")):
+        self.ozet_tab, self.tablo_tab, self.grafik_tab, self.ham_tab, self.devam_tab = (ttk.Frame(nb) for _ in range(5))
+        for f, ad in ((self.ozet_tab, "Özet"), (self.tablo_tab, "Hareket Tablosu"), (self.grafik_tab, "Grafik"), (self.devam_tab, "Yeni Parseller"), (self.ham_tab, "Ham veri")):
             nb.add(f, text=ad)
         self.satirlar = []
         try:
@@ -572,6 +572,7 @@ class Detay(tk.Toplevel):
         self._ozet()
         self._tablo()
         self._grafik()
+        self._devam()
         self._ham()
 
     def _ozet(self):
@@ -643,6 +644,27 @@ class Detay(tk.Toplevel):
         for n, x in ax.items():
             kutu(x, alt_y if pasif else ust_y, n, "#7a9a3a", "#fff")
 
+    def _devam(self):
+        """Pasif parselden oluşan yeni parsellerin kendi TKGM alan/niteliklerini göster."""
+        try:
+            devam = json.loads(self.row.get("devam_parseller") or "[]")
+        except (TypeError, ValueError):
+            devam = []
+        cols = ("ada", "parsel", "durum", "alan", "nitelik")
+        tablo = ttk.Treeview(self.devam_tab, columns=cols, show="headings")
+        baslik = {"ada": "Yeni Ada", "parsel": "Yeni Parsel", "durum": "Durum",
+                  "alan": "Alan (m²)", "nitelik": "Nitelik"}
+        genislik = {"ada": 100, "parsel": 100, "durum": 100, "alan": 130, "nitelik": 300}
+        for c in cols:
+            tablo.heading(c, text=baslik[c])
+            tablo.column(c, width=genislik[c], anchor="w")
+        for p in devam:
+            tablo.insert("", "end", values=(p.get("ada"), p.get("parsel"), p.get("durum"),
+                                            p.get("alan"), p.get("nitelik")))
+        tablo.pack(fill="both", expand=True, padx=12, pady=12)
+        if not devam:
+            ttk.Label(self.devam_tab, text="Yeni parsellerin ayrıntılı bilgisi bulunamadı.").pack(pady=18)
+
     def _ham(self):
         t = tk.Text(self.ham_tab, wrap="none", font=("Consolas", 9))
         t.pack(fill="both", expand=True, padx=8, pady=8)
@@ -708,6 +730,8 @@ class App(tk.Tk):
         self._ui()
         self.load_saved()
         self.sayac_goster()
+        for alan, var in self.vars.items():
+            var.trace_add("write", lambda *_args, k=alan, v=var: ayar_yaz("secim_" + k, v.get()))
         self.after(150, self.illeri_yukle)
 
     def _style(self):
@@ -751,6 +775,7 @@ class App(tk.Tk):
                     widget.bind("<<ComboboxSelected>>", self.il_secildi)
                 elif key == "ilce":
                     widget.bind("<<ComboboxSelected>>", self.ilce_secildi)
+                widget.bind("<KeyRelease>", lambda e, k=key: self.liste_filtrele(k, e))
                 setattr(self, key + "_combo", widget)
             else:
                 ttk.Entry(form, textvariable=v, width=width).grid(row=1, column=i, sticky="ew", padx=5, pady=(3, 0))
@@ -819,37 +844,66 @@ class App(tk.Tk):
             url = API + "/idariYapi/mahalleListe/" + str(ust_id)
         return get_json_onbellekli(url)
 
+    def liste_filtrele(self, alan, event=None):
+        """Yazıldıkça il/ilçe/mahalle seçeneklerini daralt."""
+        if event and event.keysym in ("Up", "Down", "Left", "Right", "Return", "Escape", "Tab"):
+            return
+        tam = getattr(self, alan + "_tam_liste", [])
+        if not tam:
+            return
+        yazilan = self.vars[alan].get()
+        aranan = norm_ad(yazilan)
+        eslesen = [ad for ad in tam if aranan in norm_ad(ad)] if aranan else tam
+        getattr(self, alan + "_combo")["values"] = eslesen
+
     def illeri_yukle(self):
         try:
             iller = self.idari_liste("il")
-            self.il_combo["values"] = self.liste_adlari(iller)
+            self.il_tam_liste = self.liste_adlari(iller)
+            self.il_combo["values"] = self.il_tam_liste
+            kayitli_il = ayar_oku("secim_il")
+            kayitli_ilce = ayar_oku("secim_ilce")
+            kayitli_mahalle = ayar_oku("secim_mahalle")
+            if kayitli_il in self.il_tam_liste:
+                self.vars["il"].set(kayitli_il)
+                self.il_secildi(restore=True, ilce=kayitli_ilce, mahalle=kayitli_mahalle)
         except Exception as e:
             self.status.set("İl listesi alınamadı: " + str(e))
 
-    def il_secildi(self, _event=None):
+    def il_secildi(self, _event=None, restore=False, ilce="", mahalle=""):
         try:
             iller = self.idari_liste("il")
             il_id = find_id(feature_items(iller), ["text", "ad", "name", "ilAdi"], self.vars["il"].get())
             ilceler = self.idari_liste("ilce", il_id)
-            self.ilce_combo["values"] = self.liste_adlari(ilceler)
-            self.vars["ilce"].set("")
+            self.ilce_tam_liste = self.liste_adlari(ilceler)
+            self.ilce_combo["values"] = self.ilce_tam_liste
+            self.mahalle_tam_liste = []
             self.mahalle_combo["values"] = ()
-            self.vars["mahalle"].set("")
+            if restore:
+                if ilce in self.ilce_tam_liste:
+                    self.vars["ilce"].set(ilce)
+                    self.mahalleleri_yenile(restore_mahalle=mahalle)
+            else:
+                self.vars["ilce"].set("")
+                self.vars["mahalle"].set("")
         except Exception as e:
             messagebox.showerror("İlçe listesi alınamadı", str(e))
 
     def ilce_secildi(self, _event=None):
         self.mahalleleri_yenile()
 
-    def mahalleleri_yenile(self):
+    def mahalleleri_yenile(self, restore_mahalle=""):
         try:
             iller = self.idari_liste("il")
             il_id = find_id(feature_items(iller), ["text", "ad", "name", "ilAdi"], self.vars["il"].get())
             ilceler = self.idari_liste("ilce", il_id)
             ilce_id = find_id(feature_items(ilceler), ["text", "ilceAdi", "ad", "name"], self.vars["ilce"].get())
             mahalleler = self.idari_liste("mahalle", ilce_id)
-            self.mahalle_combo["values"] = self.liste_adlari(mahalleler)
-            self.status.set(str(len(self.mahalle_combo["values"])) + " mahalle listelendi.")
+            self.mahalle_tam_liste = self.liste_adlari(mahalleler)
+            self.mahalle_combo["values"] = self.mahalle_tam_liste
+            if restore_mahalle in self.mahalle_tam_liste:
+                self.vars["mahalle"].set(restore_mahalle)
+            self.status.set(str(len(self.mahalle_tam_liste)) + " mahalle listelendi.")
         except Exception as e:
             messagebox.showerror("Mahalle listesi alınamadı", str(e))
 
@@ -873,8 +927,9 @@ class App(tk.Tk):
             messagebox.showwarning("Eksik bilgi", "İl, ilçe, mahalle, ada ve parsel alanlarının tamamını doldurun.")
             return
         self.add_row(row)
-        for v in self.vars.values():
-            v.set("")
+        # Parsel eklenince il/ilçe/mahalle sabit kalsın; yalnız ada ve parsel temizlensin.
+        self.vars["ada"].set("")
+        self.vars["parsel"].set("")
 
     def add_row(self, row):
         key = tuple(str(row.get(k, "")).strip() for k in ("il", "ilce", "mahalle", "ada", "parsel"))
