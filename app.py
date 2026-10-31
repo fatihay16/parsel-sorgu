@@ -999,7 +999,7 @@ class App(tk.Tk):
                     if alt_geom:
                         try:
                             DATA_DIR.mkdir(exist_ok=True)
-                            safe_alt = "_".join(str(row[k]).replace("/", "-").replace(" ", "_") for k in ("il", "ilce", "mahalle")) + f"_Ada_{alt.get(chr(97)+chr(100)+chr(97))}_Parsel_{alt.get(chr(112)+chr(97)+chr(114)+chr(115)+chr(101)+chr(108))}"
+                            safe_alt = "_".join(str(row[k]).replace("/", "-").replace(" ", "_") for k in ("il", "ilce", "mahalle")) + f"_Ada_{alt['ada']}_Parsel_{alt['parsel']}"
                             alt_path = DATA_DIR / (safe_alt + ".png")
                             alt_row = dict(row, ada=alt.get("ada"), parsel=alt.get("parsel"), alan=alt.get("alan"), nitelik=alt.get("nitelik"))
                             make_map(alt_row, alt_geom, alt_path)
