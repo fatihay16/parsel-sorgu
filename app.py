@@ -953,8 +953,10 @@ class App(tk.Tk):
         return get_json_onbellekli(url)
 
     def liste_filtrele(self, alan, event=None):
-        """Yazıldıkça il/ilçe/mahalle seçeneklerini daralt."""
+        """Yazarken odağı kaybetmeden ayrı öneri listesi göster."""
         if event and event.keysym in ("Up", "Down", "Left", "Right", "Return", "Escape", "Tab"):
+            if event.keysym == "Escape":
+                self.oneri_kapat(alan)
             return
         tam = getattr(self, alan + "_tam_liste", [])
         if not tam:
@@ -964,9 +966,56 @@ class App(tk.Tk):
         eslesen = [ad for ad in tam if aranan in norm_ad(ad)] if aranan else tam
         combo = getattr(self, alan + "_combo")
         combo["values"] = eslesen
-        # Yazarken listeyi otomatik aç; kullanıcı ayrıca ok/üç nokta alanına tıklamasın.
-        if eslesen and combo.focus_get() == combo:
-            combo.after_idle(lambda c=combo: c.tk.call("ttk::combobox::Post", c))
+        if not yazilan or not eslesen or combo.focus_get() != combo:
+            self.oneri_kapat(alan)
+            return
+        self.oneri_goster(alan, eslesen)
+
+    def oneri_kapat(self, alan):
+        pencere = getattr(self, "_oneri_" + alan, None)
+        if pencere is not None:
+            try:
+                pencere.destroy()
+            except tk.TclError:
+                pass
+        setattr(self, "_oneri_" + alan, None)
+
+    def oneri_goster(self, alan, secenekler):
+        combo = getattr(self, alan + "_combo")
+        self.oneri_kapat(alan)
+        pencere = tk.Toplevel(self)
+        setattr(self, "_oneri_" + alan, pencere)
+        pencere.wm_overrideredirect(True)
+        pencere.attributes("-topmost", True)
+        x = combo.winfo_rootx()
+        y = combo.winfo_rooty() + combo.winfo_height()
+        genislik = max(combo.winfo_width(), 180)
+        yukseklik = min( min(len(secenekler), 8) * 24 + 4, 196)
+        pencere.geometry(f"{genislik}x{yukseklik}+{x}+{y}")
+        liste = tk.Listbox(pencere, height=min(len(secenekler), 8), activestyle="dotbox",
+                           takefocus=0, exportselection=False)
+        liste.pack(fill="both", expand=True)
+        for ad in secenekler[:8]:
+            liste.insert("end", ad)
+        def sec(event=None):
+            secim = liste.curselection()
+            if not secim:
+                return
+            deger = liste.get(secim[0])
+            self.vars[alan].set(deger)
+            self.oneri_kapat(alan)
+            combo.focus_set()
+            if alan == "il":
+                self.il_secildi()
+            elif alan == "ilce":
+                self.ilce_secildi()
+        liste.bind("<ButtonRelease-1>", sec)
+        liste.bind("<Return>", sec)
+        liste.bind("<MouseWheel>", lambda e: "break")
+        pencere.bind("<FocusOut>", lambda e: self.after(120, lambda: self.oneri_kapat(alan)
+                          if getattr(self, "_oneri_" + alan, None) is pencere else None))
+        # Odağı giriş kutusunda bırak: kullanıcı harf yazmaya ara vermeden devam edebilir.
+        combo.focus_set()
 
     def illeri_yukle(self):
         try:
