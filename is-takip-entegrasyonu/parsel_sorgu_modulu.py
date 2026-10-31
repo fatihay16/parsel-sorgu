@@ -828,6 +828,10 @@ class HareketAyar(tk.Toplevel):
 
 class App(tk.Toplevel):
     def __init__(self, master=None, kaynak=None):
+        self._standalone_root = None
+        if master is None:
+            self._standalone_root = tk.Tk()
+            master = self._standalone_root
         super().__init__(master)
         self.kaynak = list(kaynak or [])
         self.title("Toplu Parsel Sorgulama | TKGM")
