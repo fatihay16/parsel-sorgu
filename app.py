@@ -436,7 +436,7 @@ def devam_parsellerini_zincirle(mahalle_id, ilk_yeni, ziyaret=None, derinlik=0):
             geom = yeni_data.get("geometry") or {}
             sonuc = analiz_et(ada, parsel, props, None)
             hareket, ham_h = None, ""
-            if sablon and sonuc["durum"] != "Aktif":
+            if sablon:
                 try:
                     hareket = get_json(hareket_adresi(sablon, alt_row, props, mahalle_id))
                     ham_h = json.dumps(hareket, ensure_ascii=False)
