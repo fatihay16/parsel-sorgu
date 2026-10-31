@@ -485,7 +485,7 @@ def query_one(row):
     sonuc = analiz_et(row["ada"], row["parsel"], props, None)
     hareket, ham_h, hareket_hata = None, "", ""
     sablon = ayar_oku("hareket_url")
-    if sablon and sonuc["durum"] != "Aktif":
+    if sablon:
         try:
             hareket = get_json(hareket_adresi(sablon, row, props, mahalle_id))
             ham_h = json.dumps(hareket, ensure_ascii=False)
