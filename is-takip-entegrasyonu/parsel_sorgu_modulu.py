@@ -1418,4 +1418,6 @@ class App(tk.Toplevel):
 
 
 if __name__ == "__main__":
-    App().mainloop()
+    root = tk.Tk()
+    App(root)
+    root.mainloop()
