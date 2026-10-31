@@ -399,8 +399,8 @@ def query_one(row):
     ayrinti = []
     if sonuc["durum"] is None:
         sonuc["durum"] = "Belirsiz"
-            ayrinti.append(hareket_hata or ("Aktif/pasif bilgisi servis yanıtında bulunamadı. "
-                                             "'Hareket servisini ayarla' bölümünü kullanın."))
+        ayrinti.append(hareket_hata or ("Aktif/pasif bilgisi servis yanıtında bulunamadı. "
+                                         "'Hareket servisini ayarla' bölümünü kullanın."))
     elif hareket_hata:
         ayrinti.append(hareket_hata)
     if sonuc["durum"] == "Pasif" and not sonuc["yeni"]:
