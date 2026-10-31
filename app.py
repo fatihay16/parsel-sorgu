@@ -36,7 +36,7 @@ VARSAYILAN_YENILE_GUN = 3   # Aktif görünen parseller kaç günde bir yeniden 
 BEKLEME_SN = 1.2            # istekler arası bekleme
 
 YENI_SUTUNLAR = {"pasif_mesaj": "TEXT", "islem_turu": "TEXT", "islem_tarihi": "TEXT", "yeni_parseller": "TEXT",
-                 "hareketler": "TEXT", "ham_parsel": "TEXT", "ham_hareket": "TEXT"}
+                 "hareketler": "TEXT", "ham_parsel": "TEXT", "ham_hareket": "TEXT", "devam_parseller": "TEXT"}
 SUTUNLAR = ["il", "ilce", "mahalle", "ada", "parsel", "mahalle_id", "alan", "nitelik", "koordinatlar", "map_file",
             "status", "detail", "updated"] + list(YENI_SUTUNLAR)
 
@@ -398,11 +398,7 @@ def query_one(row):
             hareket_hata = f"Hareket servisi: {e}"
     ayrinti = []
     if sonuc["durum"] is None:
-        if hareket is not None:
-            sonuc["durum"] = "Aktif"  # hareket listesi alındı, pasife dair iz yok
-            ayrinti.append("Hareket kaydı bulunamadı; pasife alındığına dair iz yok.")
-        else:
-            sonuc["durum"] = "Belirsiz"
+        sonuc["durum"] = "Belirsiz"
             ayrinti.append(hareket_hata or ("Aktif/pasif bilgisi servis yanıtında bulunamadı. "
                                              "'Hareket servisini ayarla' bölümünü kullanın."))
     elif hareket_hata:
@@ -411,12 +407,48 @@ def query_one(row):
         ayrinti.append("Yeni parsel listesi alınamadı (hareket servisi ayarlı değil veya liste boş).")
     ozet = {k: props.get(k) for k in ("ozet", "mevkii", "pafta", "zeminId", "zeminKmdurum") if props.get(k) not in (None, "")}
     ham = json.dumps({"properties": props, "geometri": (geom or {}).get("type") or None}, ensure_ascii=False)
+    devam = []
+    devam_hatalari = []
+    if sonuc["durum"] == "Pasif":
+        for no in sonuc["yeni"]:
+            try:
+                parca = no.split("/", 1)
+                if len(parca) != 2 or not all(x.strip().isdigit() for x in parca):
+                    continue
+                yeni_ada, yeni_parsel = parca[0].strip(), parca[1].strip()
+                yeni_data = get_json(f"{API}/parsel/{mahalle_id}/{yeni_ada}/{yeni_parsel}")
+                if not isinstance(yeni_data, dict) or yeni_data.get("type") != "Feature":
+                    devam_hatalari.append(f"{no}: TKGM kaydı alınamadı")
+                    continue
+                yeni_props = yeni_data.get("properties") or {}
+                yeni_geom = yeni_data.get("geometry") or {}
+                yeni_durum = props_durum(yeni_props)
+                if yeni_durum == "Pasif":
+                    continue
+                devam.append({
+                    "ada": yeni_ada, "parsel": yeni_parsel,
+                    "durum": yeni_durum or "Belirsiz",
+                    "alan": area_text(yeni_props.get("alan")) or "TKGM verisinde bulunamadı",
+                    "nitelik": str(yeni_props.get("nitelik") or "TKGM verisinde bulunamadı"),
+                    "koordinatlar": geometri_ozeti(yeni_geom),
+                    "geometry": yeni_geom
+                })
+            except (LimitHatasi, ErisimHatasi):
+                raise
+            except Exception as e:
+                devam_hatalari.append(f"{no}: {e}")
+    for item in devam:
+        item.pop("geometry", None)
+    if devam_hatalari:
+        ayrinti.append("Devam parselleri: " + "; ".join(devam_hatalari))
+    ham = json.dumps({"properties": props, "geometri": (geom or {}).get("type") or None}, ensure_ascii=False)
     row.update({
         "mahalle_id": str(mahalle_id), "alan": area_text(props.get("alan")), "nitelik": str(props.get("nitelik") or ""),
         "koordinatlar": geometri_ozeti(geom), "geometry": geom, "status": sonuc["durum"],
         "pasif_mesaj": sonuc["ibare"], "islem_turu": sonuc["islem_turu"], "islem_tarihi": sonuc["islem_tarihi"],
         "yeni_parseller": "; ".join(sonuc["yeni"]), "hareketler": json.dumps(sonuc["satirlar"], ensure_ascii=False),
         "ham_parsel": ham[:60000], "ham_hareket": ham_h[:60000],
+        "devam_parseller": json.dumps(devam, ensure_ascii=False),
         "detail": " ".join(ayrinti + ([" • ".join(f"{k}: {v}" for k, v in ozet.items())] if ozet else [])),
     })
     return row
@@ -950,8 +982,27 @@ class App(tk.Tk):
             ws.column_dimensions[chr(64 + i)].width = w
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = ws.dimensions
+        devam_ws = wb.create_sheet("Aktif Devam Parselleri")
+        devam_ws.append(["Kaynak İl", "Kaynak İlçe", "Kaynak Mahalle", "Eski Ada", "Eski Parsel", "İşlem Türü", "İşlem Tarihi", "Yeni Ada", "Yeni Parsel", "Durum", "Alan (m²)", "Nitelik", "Koordinatlar (Enlem, Boylam)"])
+        for kaynak in self.rows:
+            try:
+                altlar = json.loads(kaynak.get("devam_parseller") or "[]")
+            except (TypeError, ValueError):
+                altlar = []
+            for alt in altlar:
+                devam_ws.append([kaynak.get("il"), kaynak.get("ilce"), kaynak.get("mahalle"), kaynak.get("ada"), kaynak.get("parsel"),
+                                 kaynak.get("islem_turu"), kaynak.get("islem_tarihi"), alt.get("ada"), alt.get("parsel"), alt.get("durum"),
+                                 alt.get("alan"), alt.get("nitelik"), alt.get("koordinatlar")])
+        for c in devam_ws[1]:
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor="244766")
+            c.alignment = Alignment(wrap_text=True)
+        for i, w in enumerate([14, 20, 20, 10, 10, 14, 13, 10, 10, 12, 12, 22, 42], 1):
+            devam_ws.column_dimensions[chr(64 + i)].width = w
+        devam_ws.freeze_panes = "A2"
+        devam_ws.auto_filter.ref = devam_ws.dimensions
         wb.save(path)
-        messagebox.showinfo("Tamamlandı", "Excel sonuç dosyası oluşturuldu.")
+        messagebox.showinfo("Tamamlandı", "Excel sonuç dosyası oluşturuldu. Aktif devam parselleri ayrı sayfaya eklendi.")
 
 
 if __name__ == "__main__":
