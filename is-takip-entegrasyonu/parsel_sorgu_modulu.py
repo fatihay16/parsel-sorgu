@@ -307,23 +307,68 @@ def props_durum(props):
     return None
 
 
-def tkgm_gittigi_parseller(props):
-    """TKGM'nin gittigiParselListe alanındaki GeoJSON hedef parsellerini çıkarır."""
-    raw = (props or {}).get("gittigiParselListe")
+def _geojson_coz(raw):
+    """TKGM iç içe GeoJSON alanını dict biçimine çevirir."""
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)
         except (TypeError, ValueError):
-            return []
-    if not isinstance(raw, dict):
-        return []
+            return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def tkgm_gittigi_kayitlar(props, ziyaret=None, derinlik=0):
+    """İlk TKGM yanıtındaki tüm alt parselleri, ek API isteği yapmadan düz listeye açar."""
+    ziyaret = ziyaret if ziyaret is not None else set()
+    bulunan = []
+    if derinlik >= 20 or not isinstance(props, dict):
+        return bulunan
+    raw = _geojson_coz(props.get("gittigiParselListe"))
+    for feature in raw.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        p = feature.get("properties") or {}
+        ada = str(p.get("adaNo") or "").strip()
+        parsel = str(p.get("parselNo") or "").strip()
+        if not ada or not parsel:
+            continue
+        no = f"{ada}/{parsel}"
+        if no in ziyaret:
+            continue
+        ziyaret.add(no)
+        durum = props_durum(p) or "Belirsiz"
+        sebep = str(p.get("gittigiParselSebep") or props.get("gittigiParselSebep") or "").strip()
+        alt_sonuc = analiz_et(ada, parsel, p, None) if durum == "Pasif" else None
+        bulunan.append({
+            "ada": ada, "parsel": parsel, "durum": durum,
+            "alan": area_text(p.get("alan")) or "TKGM verisinde bulunamadı",
+            "nitelik": str(p.get("nitelik") or "TKGM verisinde bulunamadı"),
+            "koordinatlar": geometri_ozeti(feature.get("geometry") or ""),
+            "geometry": feature.get("geometry") or {},
+            "islem_turu": alt_sonuc["islem_turu"] if alt_sonuc else islem_ayikla(sebep)[1],
+            "islem_tarihi": alt_sonuc["islem_tarihi"] if alt_sonuc else islem_ayikla(sebep)[0],
+            "pasif_mesaj": sebep,
+            "yeni_parseller": "; ".join(tkgm_gittigi_parseller(p)),
+            "hareketler": json.dumps(
+                [{"aciklama": sebep, "durum": durum, "no": no}] if sebep else [],
+                ensure_ascii=False
+            ),
+            "ham_hareket": ""
+        })
+        bulunan.extend(tkgm_gittigi_kayitlar(p, ziyaret, derinlik + 1))
+    return bulunan
+
+
+def tkgm_gittigi_parseller(props):
+    """İlk seviyedeki hedef parsel numaralarını döndürür."""
+    raw = _geojson_coz((props or {}).get("gittigiParselListe"))
     sonuc = []
     for feature in raw.get("features") or []:
         p = (feature or {}).get("properties") or {}
         ada = str(p.get("adaNo") or "").strip()
         parsel = str(p.get("parselNo") or "").strip()
-        if parsel:
-            no = f"{ada}/{parsel}" if ada else parsel
+        if ada and parsel:
+            no = f"{ada}/{parsel}"
             if no not in sonuc:
                 sonuc.append(no)
     return sonuc
@@ -410,65 +455,9 @@ def area_text(v):
     return "" if v is None else str(v).strip()
 
 
-def devam_parsellerini_zincirle(mahalle_id, ilk_yeni, ziyaret=None, derinlik=0):
-    """Pasif parsellerin sonraki parsellerini zincir sonuna kadar sorgular."""
-    ziyaret = ziyaret if ziyaret is not None else set()
-    bulunan, hatalar = [], []
-    if derinlik >= 20:
-        return bulunan, ["Zincir güvenlik sınırına (20 seviye) ulaştı."]
-    sablon = ayar_oku("hareket_url")
-    for no in ilk_yeni:
-        no = str(no).strip()
-        if no in ziyaret:
-            continue
-        ziyaret.add(no)
-        parca = no.split("/", 1)
-        if len(parca) != 2 or not all(x.strip().isdigit() for x in parca):
-            continue
-        ada, parsel = (x.strip() for x in parca)
-        alt_row = {"ada": ada, "parsel": parsel}
-        try:
-            yeni_data = get_json(f"{API}/parsel/{mahalle_id}/{ada}/{parsel}")
-            if not isinstance(yeni_data, dict) or yeni_data.get("type") != "Feature":
-                hatalar.append(f"{no}: TKGM kaydı alınamadı")
-                continue
-            props = yeni_data.get("properties") or {}
-            geom = yeni_data.get("geometry") or {}
-            sonuc = analiz_et(ada, parsel, props, None)
-            hareket, ham_h = None, ""
-            if sablon:
-                try:
-                    hareket = get_json(hareket_adresi(sablon, alt_row, props, mahalle_id))
-                    ham_h = json.dumps(hareket, ensure_ascii=False)
-                    if hareket_gecerli(hareket):
-                        sonuc = analiz_et(ada, parsel, props, hareket)
-                    else:
-                        hareket = None
-                except (LimitHatasi, ErisimHatasi):
-                    raise
-                except Exception as e:
-                    hatalar.append(f"{no} hareket bilgisi: {e}")
-                    hareket = None
-            durum = sonuc["durum"] or "Belirsiz"
-            bulunan.append({
-                "ada": ada, "parsel": parsel, "durum": durum,
-                "alan": area_text(props.get("alan")) or "TKGM verisinde bulunamadı",
-                "nitelik": str(props.get("nitelik") or "TKGM verisinde bulunamadı"),
-                "koordinatlar": geometri_ozeti(geom), "geometry": geom,
-                "islem_turu": sonuc["islem_turu"], "islem_tarihi": sonuc["islem_tarihi"],
-                "pasif_mesaj": sonuc["ibare"], "yeni_parseller": "; ".join(sonuc["yeni"]),
-                "hareketler": json.dumps(sonuc["satirlar"], ensure_ascii=False),
-                "ham_hareket": ham_h[:60000]
-            })
-            if durum == "Pasif" and sonuc["yeni"]:
-                altlar, alt_hatalar = devam_parsellerini_zincirle(mahalle_id, sonuc["yeni"], ziyaret, derinlik + 1)
-                bulunan.extend(altlar)
-                hatalar.extend(alt_hatalar)
-        except (LimitHatasi, ErisimHatasi):
-            raise
-        except Exception as e:
-            hatalar.append(f"{no}: {e}")
-    return bulunan, hatalar
+def devam_parsellerini_zincirle(props):
+    """Alt parsel zincirini ana TKGM yanıtının içindeki iç içe veriden çıkarır."""
+    return tkgm_gittigi_kayitlar(props), []
 
 
 def query_one(row):
@@ -508,7 +497,7 @@ def query_one(row):
     ham = json.dumps({"properties": props, "geometri": (geom or {}).get("type") or None}, ensure_ascii=False)
     devam, devam_hatalari = [], []
     if sonuc["durum"] == "Pasif" and sonuc["yeni"]:
-        devam, devam_hatalari = devam_parsellerini_zincirle(mahalle_id, sonuc["yeni"])
+        devam, devam_hatalari = devam_parsellerini_zincirle(props)
     if sonuc["durum"] == "Pasif" and not sonuc["yeni"]:
         ayrinti.append("Yeni parsel listesi alınamadı (hareket servisi ayarlı değil veya liste boş).")
     if devam_hatalari:
