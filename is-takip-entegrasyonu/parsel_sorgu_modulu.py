@@ -390,12 +390,20 @@ def analiz_et(ada, parsel, props, hareket):
     # TKGM hareket bilgisi aynı parsel cevabının properties alanında geliyor.
     tkgm_durum = props_durum(props)
     sebep = str((props or {}).get("gittigiParselSebep") or "").strip()
-    hedefler = tkgm_gittigi_parseller(props)
+    hedefler = _geojson_coz((props or {}).get("gittigiParselListe")).get("features") or []
     if tkgm_durum == "Pasif":
         ibare = sebep or "Bu taşınmaz pasif durumdadır."
         satirlar.append({"aciklama": ibare, "durum": "Pasif", "no": kendi})
-        for no in hedefler:
-            satirlar.append({"aciklama": sebep, "durum": "Aktif", "no": no})
+        for feature in hedefler:
+            p = (feature or {}).get("properties") or {}
+            ada_alt = str(p.get("adaNo") or "").strip()
+            parsel_alt = str(p.get("parselNo") or "").strip()
+            if ada_alt and parsel_alt:
+                no = f"{ada_alt}/{parsel_alt}"
+                durum_alt = props_durum(p) or "Belirsiz"
+                satir = {"aciklama": sebep, "durum": durum_alt, "no": no}
+                if satir not in satirlar:
+                    satirlar.append(satir)
     for v in kaynaklar:
         for s in hareket_satirlari(v):
             if s not in satirlar:
@@ -496,10 +504,10 @@ def query_one(row):
     ozet = {k: props.get(k) for k in ("ozet", "mevkii", "pafta", "zeminId", "zeminKmdurum") if props.get(k) not in (None, "")}
     ham = json.dumps({"properties": props, "geometri": (geom or {}).get("type") or None}, ensure_ascii=False)
     devam, devam_hatalari = [], []
-    if sonuc["durum"] == "Pasif" and sonuc["yeni"]:
+    if sonuc["durum"] == "Pasif" and tkgm_gittigi_parseller(props):
         devam, devam_hatalari = devam_parsellerini_zincirle(props)
-    if sonuc["durum"] == "Pasif" and not sonuc["yeni"]:
-        ayrinti.append("Yeni parsel listesi alınamadı (hareket servisi ayarlı değil veya liste boş).")
+    if sonuc["durum"] == "Pasif" and not tkgm_gittigi_parseller(props) and not sonuc["yeni"]:
+        ayrinti.append("Yeni parsel listesi alınamadı (TKGM yanıtında alt parsel listesi yok).")
     if devam_hatalari:
         ayrinti.append("Devam parselleri: " + "; ".join(devam_hatalari))
     row.update({
