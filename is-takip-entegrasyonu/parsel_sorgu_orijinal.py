@@ -17,7 +17,6 @@ from tkinter import ttk, filedialog, messagebox
 import requests
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
-from PIL import Image, ImageDraw, ImageFont
 
 APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = APP_DIR / "Sonuclar"
@@ -524,40 +523,6 @@ def query_one(row):
         "detail": " ".join(ayrinti + ([" • ".join(f"{k}: {v}" for k, v in ozet.items())] if ozet else [])),
     })
     return row
-
-
-def make_map(row, geometry, out_path):
-    coords = (geometry or {}).get("coordinates") or []
-    if (geometry or {}).get("type") == "MultiPolygon":
-        coords = coords[0] if coords else []
-    ring = coords[0] if coords and isinstance(coords[0], list) else coords
-    if not ring or not isinstance(ring[0], (list, tuple)):
-        raise RuntimeError("Harita için parsel geometrisi bulunamadı.")
-    xs = [float(p[0]) for p in ring]
-    ys = [float(p[1]) for p in ring]
-    minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
-    w, h, margin = 1200, 900, 110
-    dx, dy = max(maxx - minx, 1e-9), max(maxy - miny, 1e-9)
-    scale = min((w - 2 * margin) / dx, (h - 2 * margin) / dy)
-    ox, oy = (w - dx * scale) / 2, (h - dy * scale) / 2
-    pts = [(ox + (x - minx) * scale, h - (oy + (y - miny) * scale)) for x, y in zip(xs, ys)]
-    im = Image.new("RGB", (w, h), "#f4f6f8")
-    d = ImageDraw.Draw(im)
-    for x in range(60, w, 120):
-        d.line((x, 70, x, h - 70), fill="#e3e7eb", width=1)
-    for y in range(70, h, 120):
-        d.line((60, y, w - 60, y), fill="#e3e7eb", width=1)
-    d.polygon(pts, fill="#a8d8b9", outline="#176b3a")
-    d.line(pts + [pts[0]], fill="#176b3a", width=7)
-    try:
-        font = ImageFont.truetype("arial.ttf", 30)
-        small = ImageFont.truetype("arial.ttf", 22)
-    except Exception:
-        font = small = ImageFont.load_default()
-    d.text((60, 25), f"{row['mahalle']} | Ada {row['ada']} / Parsel {row['parsel']}", fill="#17212b", font=font)
-    d.text((60, h - 55), f"Alan: {row.get('alan', '-')} m²   •   {row.get('nitelik', '')}", fill="#17212b", font=small)
-    d.text((w - 280, h - 55), "TKGM parsel geometrisi", fill="#59636e", font=small)
-    im.save(out_path, quality=94)
 
 
 def hareket_sablonu_yap(url, row):
@@ -1245,32 +1210,8 @@ class App(tk.Tk):
             try:
                 self.after(0, self.status.set, f"Sorgulanıyor: {row['mahalle']} {row['ada']}/{row['parsel']}")
                 query_one(row)
-                geom = row.pop("geometry", None)
-                try:
-                    devamlar = json.loads(row.get("devam_parseller") or "[]")
-                except (TypeError, ValueError):
-                    devamlar = []
-                for alt in devamlar:
-                    alt_geom = alt.pop("geometry", None)
-                    if alt_geom:
-                        try:
-                            DATA_DIR.mkdir(exist_ok=True)
-                            safe_alt = "_".join(str(row[k]).replace("/", "-").replace(" ", "_") for k in ("il", "ilce", "mahalle")) + f"_Ada_{alt['ada']}_Parsel_{alt['parsel']}"
-                            alt_path = DATA_DIR / (safe_alt + ".png")
-                            alt_row = dict(row, ada=alt.get("ada"), parsel=alt.get("parsel"), alan=alt.get("alan"), nitelik=alt.get("nitelik"))
-                            make_map(alt_row, alt_geom, alt_path)
-                            alt["map_file"] = str(alt_path)
-                        except Exception:
-                            alt["map_file"] = ""
-                row["devam_parseller"] = json.dumps(devamlar, ensure_ascii=False)
-                if row["status"] == "Aktif" and geom:
-                    try:
-                        DATA_DIR.mkdir(exist_ok=True)
-                        safe = "_".join(str(row[k]).replace("/", "-").replace(" ", "_") for k in ("il", "ilce", "mahalle", "ada", "parsel"))
-                        make_map(row, geom, DATA_DIR / (safe + ".png"))
-                        row["map_file"] = str(DATA_DIR / (safe + ".png"))
-                    except Exception:
-                        pass  # harita üretilememesi sorgu sonucunu bozmaz
+                row.pop("geometry", None)
+                # Harita PNG dosyası üretilmez veya diske kaydedilmez.
                 sayim[row["status"]] = sayim.get(row["status"], 0) + 1
             except (LimitHatasi, ErisimHatasi) as e:
                 durdu = str(e)
@@ -1304,17 +1245,17 @@ class App(tk.Tk):
         ws = wb.active
         ws.title = "Sorgu Sonuçları"
         ws.append(["İl", "İlçe", "Mahalle", "Ada", "Parsel", "Parsel durumu", "Alan (m²)", "Nitelik", "Pasif ibaresi", "İşlem türü",
-                   "İşlem tarihi", "Yeni parseller", "Son kontrol", "Açıklama", "Koordinatlar (Enlem, Boylam)", "Harita Görseli"])
+                   "İşlem tarihi", "Yeni parseller", "Son kontrol", "Açıklama", "Koordinatlar (Enlem, Boylam)"])
         for r in self.rows:
             ws.append([r.get("il"), r.get("ilce"), r.get("mahalle"), r.get("ada"), r.get("parsel"), r.get("status"), r.get("alan"),
                        r.get("nitelik"), r.get("pasif_mesaj"), r.get("islem_turu"), r.get("islem_tarihi"),
                        (r.get("yeni_parseller") or "").replace("; ", ", "), (r.get("updated") or "").replace("T", " "),
-                       r.get("detail"), r.get("koordinatlar"), r.get("map_file")])
+                       r.get("detail"), r.get("koordinatlar")])
         for c in ws[1]:
             c.font = Font(bold=True, color="FFFFFF")
             c.fill = PatternFill("solid", fgColor="244766")
             c.alignment = Alignment(wrap_text=True)
-        for i, w in enumerate([14, 20, 20, 10, 10, 14, 12, 16, 50, 12, 13, 24, 17, 50, 40, 40], 1):
+        for i, w in enumerate([14, 20, 20, 10, 10, 14, 12, 16, 50, 12, 13, 24, 17, 50, 40], 1):
             ws.column_dimensions[chr(64 + i)].width = w
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = ws.dimensions
