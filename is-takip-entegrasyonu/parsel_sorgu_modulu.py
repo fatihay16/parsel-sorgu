@@ -1334,7 +1334,7 @@ class App(tk.Toplevel):
             ws.column_dimensions[chr(64 + i)].width = w
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = ws.dimensions
-        devam_ws = wb.create_sheet("Aktif Devam Parselleri")
+        devam_ws = wb.create_sheet("Parsel Hareket Zinciri")
         devam_ws.append(["Kaynak İl", "Kaynak İlçe", "Kaynak Mahalle", "Başlangıç Ada", "Başlangıç Parsel", "İşlem Türü", "İşlem Tarihi", "Alt Ada", "Alt Parsel", "Durum", "Alan (m²)", "Nitelik", "Koordinatlar (Enlem, Boylam)"])
         for kaynak in self.rows:
             try:
