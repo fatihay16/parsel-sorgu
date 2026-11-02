@@ -514,7 +514,9 @@ def query_one(row):
         "mahalle_id": str(mahalle_id), "alan": area_text(props.get("alan")) or "TKGM verisinde bulunamadı", "nitelik": str(props.get("nitelik") or "TKGM verisinde bulunamadı"),
         "koordinatlar": geometri_ozeti(geom), "geometry": geom, "status": sonuc["durum"],
         "pasif_mesaj": sonuc["ibare"], "islem_turu": sonuc["islem_turu"], "islem_tarihi": sonuc["islem_tarihi"],
-        "yeni_parseller": "; ".join(sonuc["yeni"]), "hareketler": json.dumps(sonuc["satirlar"], ensure_ascii=False),
+        "yeni_parseller": "; ".join(dict.fromkeys(
+            tkgm_gittigi_parseller(props) + sonuc["yeni"]
+        )), "hareketler": json.dumps(sonuc["satirlar"], ensure_ascii=False),
         "ham_parsel": ham[:60000], "ham_hareket": ham_h[:60000],
         "devam_parseller": json.dumps(devam, ensure_ascii=False),
         "detail": " ".join(ayrinti + ([" • ".join(f"{k}: {v}" for k, v in ozet.items())] if ozet else [])),
@@ -1333,7 +1335,7 @@ class App(tk.Toplevel):
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = ws.dimensions
         devam_ws = wb.create_sheet("Aktif Devam Parselleri")
-        devam_ws.append(["Kaynak İl", "Kaynak İlçe", "Kaynak Mahalle", "Eski Ada", "Eski Parsel", "İşlem Türü", "İşlem Tarihi", "Yeni Ada", "Yeni Parsel", "Durum", "Alan (m²)", "Nitelik", "Koordinatlar (Enlem, Boylam)"])
+        devam_ws.append(["Kaynak İl", "Kaynak İlçe", "Kaynak Mahalle", "Başlangıç Ada", "Başlangıç Parsel", "İşlem Türü", "İşlem Tarihi", "Alt Ada", "Alt Parsel", "Durum", "Alan (m²)", "Nitelik", "Koordinatlar (Enlem, Boylam)"])
         for kaynak in self.rows:
             try:
                 altlar = json.loads(kaynak.get("devam_parseller") or "[]")
@@ -1352,7 +1354,7 @@ class App(tk.Toplevel):
         devam_ws.freeze_panes = "A2"
         devam_ws.auto_filter.ref = devam_ws.dimensions
         wb.save(path)
-        messagebox.showinfo("Tamamlandı", "Excel sonuç dosyası oluşturuldu. Aktif devam parselleri ayrı sayfaya eklendi.")
+        messagebox.showinfo("Tamamlandı", "Excel sonuç dosyası oluşturuldu. Parsel hareket zinciri (pasif ara ve aktif son parseller) ayrı sayfaya eklendi.")
 
 
 if __name__ == "__main__":
